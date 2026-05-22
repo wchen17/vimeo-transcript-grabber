@@ -1,0 +1,5 @@
+# Private, local-only files. Never published.
+LEARNING.md
+*.local.md
+*.txt.out
+transcript*.txt

@@ -20,24 +20,26 @@
   const maxRendered = () => Math.max(-1, ...[...document.querySelectorAll('div[data-index]')]
     .map(el => +el.getAttribute('data-index')));
 
-  // 3. Walk down one viewport at a time, waiting only until new cues paint.
-  scroller.scrollTop = 0; await sleep(150); grab();
-  for (let pos = 0; pos < scroller.scrollHeight; pos += scroller.clientHeight) {
-    const before = maxRendered();
-    scroller.scrollTop = pos + scroller.clientHeight;
-    for (let t = 0; t < 300 && maxRendered() === before; t += 25) await sleep(25);
-    grab();
-  }
-  scroller.scrollTop = scroller.scrollHeight; await sleep(150); grab();
+  // 3. One top-to-bottom pass, waiting only until each new batch paints.
+  const pass = async () => {
+    scroller.scrollTop = 0; await sleep(150); grab();
+    for (let pos = 0; pos < scroller.scrollHeight; pos += scroller.clientHeight) {
+      const before = maxRendered();
+      scroller.scrollTop = pos + scroller.clientHeight;
+      for (let t = 0; t < 400 && maxRendered() === before; t += 25) await sleep(25);
+      grab();
+    }
+    scroller.scrollTop = scroller.scrollHeight; await sleep(200); grab();
+  };
 
-  // 4. Fill any gaps so going fast never costs completeness.
-  const max = Math.max(...cues.keys());
-  for (let i = 0; i <= max; i++) if (!cues.has(i)) {
-    scroller.scrollTop = (i / max) * scroller.scrollHeight;
-    await sleep(120); grab();
-  }
+  // 4. Repeat whole passes until the cue count stops growing (max 3). Sequential
+  // scrolling renders every cue and is far gentler than hundreds of random jumps,
+  // which on long transcripts can thrash the page hard enough to crash the player.
+  let prev = -1, tries = 0;
+  while (cues.size !== prev && tries < 3) { prev = cues.size; await pass(); tries++; }
 
   // 5. Strip timestamps, assemble in order, download named after the video.
+  const max = Math.max(...cues.keys());
   const stripTime = s => s.replace(/\d{1,2}:\d{2}(:\d{2})?/g, '').replace(/\s+/g, ' ').trim();
   const lines = [...cues.entries()].sort((a, b) => a[0] - b[0]).map(([, t]) => stripTime(t)).filter(Boolean);
   const title = (document.querySelector('meta[property="og:title"]')?.content
@@ -47,5 +49,5 @@
   a.download = title + '.txt'; a.click();
 
   const gaps = []; for (let i = 0; i <= max; i++) if (!cues.has(i)) gaps.push(i);
-  console.log(`Saved ${lines.length} cues as ${title}.txt ` + (gaps.length ? `(MISSING ${gaps.length})` : `(complete 0-${max})`));
+  console.log(`Saved ${lines.length} cues as ${title}.txt ` + (gaps.length ? `(missing ${gaps.length}: ${gaps.slice(0, 15)})` : `(complete 0-${max})`));
 })();

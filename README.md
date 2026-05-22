@@ -79,32 +79,33 @@ The `Map` is the key design choice. The list is **virtualized**, meaning Vimeo r
 
 `+el.getAttribute('data-index')` uses the unary `+` to convert the attribute string `"5"` into the number `5`, so the keys sort numerically later.
 
-### 3. Scroll and wait adaptively
+### 3. One scroll pass, waiting adaptively
 
 ```js
-for (let pos = 0; pos < scroller.scrollHeight; pos += scroller.clientHeight) {
-  const before = maxRendered();
-  scroller.scrollTop = pos + scroller.clientHeight;
-  for (let t = 0; t < 300 && maxRendered() === before; t += 25) await sleep(25);
-  grab();
-}
+const pass = async () => {
+  scroller.scrollTop = 0; await sleep(150); grab();
+  for (let pos = 0; pos < scroller.scrollHeight; pos += scroller.clientHeight) {
+    const before = maxRendered();
+    scroller.scrollTop = pos + scroller.clientHeight;
+    for (let t = 0; t < 400 && maxRendered() === before; t += 25) await sleep(25);
+    grab();
+  }
+  scroller.scrollTop = scroller.scrollHeight; await sleep(200); grab();
+};
 ```
 
 `scrollHeight` is the full scrollable height; `clientHeight` is one visible viewport. We step down one viewport at a time so no cue is skipped over without ever being rendered.
 
-The inner loop is the speed trick. Instead of always pausing a fixed amount, it polls every 25ms and stops the instant `maxRendered()` (the highest cue index currently in the page) goes up, which means the new batch has painted. The `&& t < 300` is a safety cap so a stall cannot hang the loop forever. *Why this is faster than a fixed `sleep(200)`: on a quick render it proceeds after ~30ms; it only ever waits as long as the page actually needs.*
+The inner loop is the speed trick. Instead of always pausing a fixed amount, it polls every 25ms and stops the instant `maxRendered()` (the highest cue index currently in the page) goes up, which means the new batch has painted. The `t < 400` is a safety cap so a stall cannot hang the loop forever. *Why this is faster than a fixed `sleep(200)`: on a quick render it proceeds after ~30ms; it only ever waits as long as the page actually needs.*
 
-### 4. Fill the gaps
+### 4. Repeat passes until stable
 
 ```js
-const max = Math.max(...cues.keys());
-for (let i = 0; i <= max; i++) if (!cues.has(i)) {
-  scroller.scrollTop = (i / max) * scroller.scrollHeight;
-  await sleep(120); grab();
-}
+let prev = -1, tries = 0;
+while (cues.size !== prev && tries < 3) { prev = cues.size; await pass(); tries++; }
 ```
 
-Going fast risks missing a cue if rendering lagged. So after the main pass we check every index from `0` to the max. If one is missing, we scroll **proportionally** to where it should be (`i / max` of the way down) and grab again. This makes speed safe: the worst case is a few extra scrolls, never a dropped line. `Math.max(...cues.keys())` spreads the Map's keys into `Math.max` as arguments to find the highest index.
+A single pass usually gets everything, but a slow render can drop a cue. So we run another full pass and stop only when the cue count stops growing (or after 3 passes). Sequential passes render every cue naturally. *Why this beats jumping straight to each missing cue: an earlier version scrolled proportionally to a missing index's estimated position, but cues have variable heights so the estimate is off, and on a long (900+ cue) transcript that fired hundreds of rapid jumps. The resulting scroll-and-re-render thrash can starve the video player and trigger Vimeo's "technical difficulty" overlay. Gentle repeated passes use far fewer scrolls and avoid that.*
 
 ### 5. Clean up and download
 
