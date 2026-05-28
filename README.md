@@ -1,31 +1,34 @@
 # vimeo-transcript-grabber
 
-Pull the full transcript from any Vimeo video you can watch, straight from your browser. No extension, no account, no server calls.
+Pull the full transcript from any **Vimeo or YouTube** video you can watch, straight from your browser. No extension, no account, no server calls.
 
 ## The problem
 
-Vimeo shows a transcript panel, but two obvious ways to get the text both fail:
+Both sites show a transcript panel, but the obvious ways to get the text fail:
 
-- **Selecting and copying** only grabs what is on screen. The panel is a virtualized list: it keeps just a handful of lines in the page at a time and destroys the rest as you scroll, so a manual copy never gets the whole thing.
-- **Fetching the caption file** (`player.vimeo.com/.../texttrack/...vtt`) returns `error_code 8003` on private or restricted videos, because that URL is signed with a token only the video owner's session holds.
+- **Vimeo — selecting and copying** only grabs what is on screen. The panel is a virtualized list: it keeps just a handful of lines in the page at a time and destroys the rest as you scroll, so a manual copy never gets the whole thing.
+- **Vimeo — fetching the caption file** (`player.vimeo.com/.../texttrack/...vtt`) returns `error_code 8003` on private or restricted videos, because that URL is signed with a token only the video owner's session holds.
+- **YouTube — finding the transcript at all.** Each redesign buries the "Show transcript" button deeper (now hidden inside the expanded description or the `...` menu), and once you find it the panel is still a scroll-and-skim affair, not a copyable block.
 
-This script sidesteps both. The transcript is text Vimeo already rendered into *your* page for *you* to read. The script just reads it out of the page and scrolls the list to force the rest to render. Nothing is fetched that you were not already shown.
+This script sidesteps all of that. The transcript is text the site already rendered into *your* page for *you* to read. The script just reads it out of the page — scrolling Vimeo's virtualized list to force the rest to render, and on YouTube even clicking "Show transcript" open for you. Nothing is fetched that you were not already shown.
 
 ## Usage
 
 ### Option A: console (one-time)
 
-1. Open the Vimeo video. Click the **Transcript / CC** panel so it is visible.
+1. Open the video.
+   - **Vimeo:** click the **Transcript / CC** panel so it is visible.
+   - **YouTube:** nothing to do — the script tries to open the transcript itself. If it can't, expand the description (**...more**) and click **Show transcript** first.
 2. Press **F12**, go to the **Console** tab.
 3. Paste the contents of [`grab-transcript.js`](grab-transcript.js), press Enter.
-4. A `.txt` named after the video downloads. The console logs `(complete 0-N)` when it captured every cue.
+4. A `.txt` named after the video downloads. On Vimeo the console logs `(complete 0-N)` when it captured every cue.
 
 Stay on the tab while it runs. Background tabs throttle timers and the scroll stalls.
 
 ### Option B: bookmarklet (one click, reusable)
 
 1. Create a new bookmark. Paste the single line from [`bookmarklet.txt`](bookmarklet.txt) as the URL.
-2. On any Vimeo video, open the Transcript panel, then click the bookmark.
+2. On any Vimeo or YouTube video, click the bookmark (on Vimeo, open the Transcript panel first).
 
 If the bookmark URL field strips the leading `javascript:`, type it back in by hand. Browsers do that as a paste-safety measure.
 
@@ -130,10 +133,35 @@ This is the standard browser download trick with no server involved: wrap the te
 
 Read what is already in the DOM, use a `Map` keyed by a stable index to defeat the recycling, and poll-don't-sleep so it is fast without dropping lines.
 
+### YouTube: the easy cousin
+
+YouTube needs none of the virtualization gymnastics. Its transcript panel renders **every** segment into the DOM at once, in document order, as `<ytd-transcript-segment-renderer>` elements:
+
+```js
+const segs = [...document.querySelectorAll('ytd-transcript-segment-renderer')];
+const lines = segs
+  .map(el => stripTime((el.querySelector('.segment-text, yt-formatted-string') || el).innerText))
+  .filter(Boolean);
+```
+
+So there is no scrolling, no `Map`, no dedupe — just read each segment's `.segment-text` straight down the list. The shared `stripTime` and download helpers are reused as-is.
+
+The only friction is that YouTube hides the panel. The script first checks whether segments already exist; if not, it expands the description and hunts for a button whose `aria-label` or text mentions "transcript", clicks it, and polls up to 5 seconds for the segments to appear:
+
+```js
+document.querySelector('tp-yt-paper-button#expand, #expand')?.click();
+await sleep(300);
+findBtn()?.click();
+for (let t = 0; t < 5000 && !document.querySelector(segSel); t += 200) await sleep(200);
+```
+
+If the button has moved again in a future redesign, open the transcript by hand and rerun — the read step still works.
+
 ## Limitations
 
-- Needs the transcript panel to actually exist on the video. No captions, nothing to grab.
-- Relies on Vimeo's current DOM structure. If they redesign the transcript UI, the selectors in step 1 and 2 may need updating. That is ordinary frontend churn, not something Vimeo can block, since the script only reads your own rendered page.
+- Needs the transcript/captions to actually exist on the video. No captions, nothing to grab.
+- Relies on each site's current DOM structure. If Vimeo or YouTube redesigns the transcript UI, the selectors may need updating. That is ordinary frontend churn, not something they can block, since the script only reads your own rendered page.
+- YouTube's auto-open hunts for the "Show transcript" button by `aria-label`/text. If a redesign moves it, open the transcript manually and rerun.
 
 ## License
 
